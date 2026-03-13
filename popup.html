@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="header">
+    <h1>Speech Speed</h1>
+    <button id="toggle" class="toggle off">OFF</button>
+  </div>
+
+  <div id="status" class="status">
+    <div class="stat-row">
+      <span class="stat-label">Speech rate</span>
+      <span class="stat-val" id="cur-rate">--</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Playback</span>
+      <span class="stat-val" id="cur-speed">1.00x</span>
+    </div>
+  </div>
+
+  <div class="controls">
+    <label>
+      <span class="ctrl-label">Target rate <span class="ctrl-val" id="target-val">9</span> syl/s</span>
+      <input type="range" id="target-rate" min="4" max="14" step="0.5" value="9">
+    </label>
+    <label>
+      <span class="ctrl-label">Min speed <span class="ctrl-val" id="min-val">1.0</span>x</span>
+      <input type="range" id="min-speed" min="1" max="2" step="0.1" value="1">
+    </label>
+    <label>
+      <span class="ctrl-label">Max speed <span class="ctrl-val" id="max-val">3.5</span>x</span>
+      <input type="range" id="max-speed" min="1.5" max="5" step="0.25" value="3.5">
+    </label>
+  </div>
+
+  <button id="reset" class="reset">Reset defaults</button>
+
+  <script src="popup.js"></script>
+</body>
+</html>

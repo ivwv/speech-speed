@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "Speech Speed",
+  "version": "1.0",
+  "description": "Automatically adjusts video playback speed based on how fast the speaker is talking",
+  "permissions": ["storage", "activeTab"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Speech Speed"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
