@@ -109,6 +109,13 @@
     }
     if (changes.settings) {
       settings = { ...DEFAULTS, ...changes.settings.newValue };
+      // Apply new speed immediately if speech is happening
+      if (enabled && activeVideo && diag.lastNaturalRate > 0) {
+        const targetSpeed = settings.targetRate / diag.lastNaturalRate;
+        const clamped = Math.max(settings.minSpeed, Math.min(settings.maxSpeed, targetSpeed));
+        currentSpeed = clamped;
+        applySpeed();
+      }
     }
     if (changes.showOverlay !== undefined) {
       overlaySettings.showOverlay = changes.showOverlay.newValue;
@@ -136,11 +143,15 @@
       if (enabled) init(); else teardown();
       sendResponse({ enabled });
     } else if (msg.type === 'updateSettings') {
-      if (msg.settings.showOverlay !== undefined) {
-        overlaySettings.showOverlay = msg.settings.showOverlay;
+      const { showOverlay, ...rest } = msg.settings;
+      if (showOverlay !== undefined) {
+        overlaySettings.showOverlay = showOverlay;
       }
-      settings = { ...DEFAULTS, ...msg.settings };
-      chrome.storage.local.set({ settings });
+      if (Object.keys(rest).length > 0) {
+        // Merge into current settings instead of defaults
+        settings = { ...settings, ...rest };
+        chrome.storage.local.set({ settings });
+      }
       sendResponse({ ok: true });
     }
     return true;
@@ -154,6 +165,50 @@
 
   let domObserver = null;
 
+  function setupGlobalListeners() {
+    // Catch when a video starts playing - very reliable for dynamic feeds like Douyin
+    document.addEventListener('play', (e) => {
+      if (!enabled) return;
+      if (e.target.tagName === 'VIDEO' && e.target !== activeVideo) {
+        log('Switching to playing video');
+        attachToVideo(e.target);
+      }
+    }, true);
+  }
+
+  function findBestVideo() {
+    const videos = Array.from(document.querySelectorAll('video'));
+    if (videos.length === 0) return null;
+
+    // Score videos based on: playing state > visibility > area
+    let best = null;
+    let maxScore = -1;
+
+    videos.forEach(v => {
+      const rect = v.getBoundingClientRect();
+      const area = rect.width * rect.height;
+      if (area === 0) return;
+
+      const isVisible = (
+        rect.top < (window.innerHeight || document.documentElement.clientHeight) &&
+        rect.bottom > 0 &&
+        rect.left < (window.innerWidth || document.documentElement.clientWidth) &&
+        rect.right > 0
+      );
+
+      let score = area;
+      if (!v.paused) score *= 1000; // Strongly prefer playing videos
+      if (isVisible) score *= 2;    // Prefer visible ones
+
+      if (score > maxScore) {
+        maxScore = score;
+        best = v;
+      }
+    });
+
+    return best || videos[0];
+  }
+
   function observeDom() {
     if (domObserver) return;
     let checkTimeout = null;
@@ -161,69 +216,45 @@
       if (checkTimeout) return;
       checkTimeout = setTimeout(() => {
         checkTimeout = null;
-        const videos = document.querySelectorAll('video');
-        if (videos.length === 0) {
+        if (!enabled) return;
+        
+        const best = findBestVideo();
+        if (!best) {
           if (activeVideo) {
             teardownAudio();
             activeVideo = null;
           }
           return;
         }
-        
-        let currentBest = null;
-        let bestArea = 0;
-        videos.forEach((v) => {
-          const area = v.clientWidth * v.clientHeight;
-          if (area > bestArea) { currentBest = v; bestArea = area; }
-        });
-        if (!currentBest) currentBest = videos[0];
-        
-        if (currentBest !== activeVideo || !audioCtx) {
-          teardownAudio();
-          activeVideo = currentBest;
-          diag.videoSrc = (activeVideo.src || activeVideo.currentSrc || '').slice(0, 80);
-          if (activeVideo.readyState >= 2) {
-            setupAudio(activeVideo);
-          } else {
-            const onCanPlay = function() {
-              activeVideo.removeEventListener('canplay', onCanPlay);
-              if (document.contains(activeVideo)) {
-                setupAudio(activeVideo);
-              }
-            };
-            activeVideo.addEventListener('canplay', onCanPlay);
-          }
+
+        if (best !== activeVideo || !audioCtx) {
+          attachToVideo(best);
         }
-      }, 300);
+      }, 500); // Slightly longer debounce for performance
     });
     domObserver.observe(document.documentElement, { childList: true, subtree: true });
   }
 
   function findAndAttach() {
-    const videos = document.querySelectorAll('video');
-    log('Scanning for videos: found %d', videos.length);
-    if (videos.length === 0) { 
+    const best = findBestVideo();
+    if (!best) {
       if (activeVideo) {
         teardownAudio();
         activeVideo = null;
       }
-      diag.stage = 'waiting for <video>'; 
-      return; 
+      diag.stage = 'waiting for <video>';
+      return;
     }
+    attachToVideo(best);
+  }
 
-    let best = null;
-    let bestArea = 0;
-    videos.forEach((v) => {
-      const area = v.clientWidth * v.clientHeight;
-      if (area > bestArea) { best = v; bestArea = area; }
-    });
-    if (!best) best = videos[0];
-    if (best === activeVideo && audioCtx) return;
+  function attachToVideo(video) {
+    if (activeVideo === video && audioCtx) return;
 
     teardownAudio();
-    activeVideo = best;
+    activeVideo = video;
     diag.videoSrc = (activeVideo.src || activeVideo.currentSrc || '').slice(0, 80);
-    log('Attaching to video (%d×%d)', activeVideo.clientWidth, activeVideo.clientHeight);
+    log('Attaching to video (%d×%d) src=%s', activeVideo.clientWidth, activeVideo.clientHeight, diag.videoSrc);
     updateIconState('video');
 
     if (activeVideo.readyState >= 2) {
@@ -231,10 +262,10 @@
     } else {
       diag.stage = 'waiting for canplay';
       const onCanPlay = function() {
-        activeVideo.removeEventListener('canplay', onCanPlay);
-        if (activeVideo === best && document.contains(activeVideo)) {
+        if (activeVideo === video) {
           setupAudio(activeVideo);
         }
+        activeVideo.removeEventListener('canplay', onCanPlay);
       };
       activeVideo.addEventListener('canplay', onCanPlay);
     }
@@ -289,47 +320,48 @@
       detector.lastCrossingTime = -1000;
 
       const buf = new Float32Array(analyserNode.fftSize);
-      pollTimer = setInterval(() => pollAnalyser(buf), 30);
+       
+       // Event listeners for playback state
+       const onPause = () => {
+         if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+       };
+       const onPlay = () => {
+         if (!pollTimer && activeVideo === video && enabled) {
+           pollTimer = setInterval(() => pollAnalyser(buf), 30);
+         }
+       };
+       const onEmptied = () => {
+         teardownAudio();
+         activeVideo = null;
+         setTimeout(() => findAndAttach(), 500);
+       };
 
-      diag.stage = 'running';
-      log('Pipeline running. target=%s min=%s max=%s', settings.targetRate, settings.minSpeed, settings.maxSpeed);
-      updateIconState('speeding');
+       video.addEventListener('pause', onPause);
+       video.addEventListener('play', onPlay);
+       video.addEventListener('emptied', onEmptied);
 
-      if (overlaySettings.showOverlay) {
-        createOverlay();
-      }
-      currentSpeed = video.playbackRate || 1;
-      lastSpeechTime = performance.now() / 1000;
-      logEntries = [];
+       // Store cleanup function
+       video._ssCleanup = () => {
+         video.removeEventListener('pause', onPause);
+         video.removeEventListener('play', onPlay);
+         video.removeEventListener('emptied', onEmptied);
+         if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+       };
 
-      if (videoRemovalObserver) {
-        videoRemovalObserver.disconnect();
-        videoRemovalObserver = null;
-      }
-      videoRemovalObserver = new MutationObserver(() => {
-        if (!document.contains(video)) {
-          teardownAudio();
-          if (activeVideo === video) {
-            activeVideo = null;
-          }
-          if (videoRemovalObserver) {
-            videoRemovalObserver.disconnect();
-            videoRemovalObserver = null;
-          }
-          setTimeout(() => findAndAttach(), 500);
-        }
-      });
-      videoRemovalObserver.observe(document.documentElement, { childList: true, subtree: true });
+       if (!video.paused) {
+         pollTimer = setInterval(() => pollAnalyser(buf), 30);
+       }
 
-      video.addEventListener('pause', function onPause() {
-        if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-      }, { once: true });
-      
-      video.addEventListener('emptied', function onEmptied() {
-        teardownAudio();
-        activeVideo = null;
-        setTimeout(() => findAndAttach(), 500);
-      }, { once: true });
+       diag.stage = 'running';
+       log('Pipeline running. target=%s min=%s max=%s', settings.targetRate, settings.minSpeed, settings.maxSpeed);
+       updateIconState('speeding');
+
+       if (overlaySettings.showOverlay) {
+         createOverlay();
+       }
+       currentSpeed = video.playbackRate || 1;
+       lastSpeechTime = performance.now() / 1000;
+       logEntries = [];
     } catch (err) {
       diag.stage = 'ERROR: ' + err.message;
       log('FAILED: %O', err);
@@ -440,6 +472,10 @@
     }
     if (activeVideo) {
       try { activeVideo.playbackRate = 1; } catch {}
+      if (activeVideo._ssCleanup) {
+        activeVideo._ssCleanup();
+        delete activeVideo._ssCleanup;
+      }
     }
     currentSpeed = 1;
     diag.stage = 'idle';
@@ -686,4 +722,7 @@
     overlayHost = null;
     overlayEls = {};
   }
+
+  // ===== One-time global setup =====
+  setupGlobalListeners();
 })();

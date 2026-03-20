@@ -50,6 +50,10 @@
     targetVal.textContent = s.targetRate;
     minVal.textContent    = s.minSpeed.toFixed(1);
     maxVal.textContent    = s.maxSpeed.toFixed(2);
+    
+    // Save to storage immediately in popup too
+    chrome.storage.local.set({ settings: s });
+    
     sendToTab({ type: 'updateSettings', settings: s });
   }
 
@@ -59,9 +63,17 @@
 
   // --- Settings checkboxes ---
   function loadSettings() {
-    chrome.storage.local.get(['showOverlay', 'autoEnable'], (data) => {
+    chrome.storage.local.get(['showOverlay', 'autoEnable', 'settings'], (data) => {
       showOverlayCheckbox.checked = data.showOverlay !== false;
       autoEnableCheckbox.checked = data.autoEnable === true;
+      if (data.settings) {
+        targetSlider.value = data.settings.targetRate || DEFAULTS.targetRate;
+        minSlider.value    = data.settings.minSpeed || DEFAULTS.minSpeed;
+        maxSlider.value    = data.settings.maxSpeed || DEFAULTS.maxSpeed;
+        targetVal.textContent = targetSlider.value;
+        minVal.textContent    = parseFloat(minSlider.value).toFixed(1);
+        maxVal.textContent    = parseFloat(maxSlider.value).toFixed(2);
+      }
     });
   }
 
@@ -79,6 +91,15 @@
     targetSlider.value = DEFAULTS.targetRate;
     minSlider.value    = DEFAULTS.minSpeed;
     maxSlider.value    = DEFAULTS.maxSpeed;
+    showOverlayCheckbox.checked = true;
+    autoEnableCheckbox.checked = false;
+    
+    // Update storage for checkboxes too
+    chrome.storage.local.set({ 
+      showOverlay: true, 
+      autoEnable: false 
+    });
+    
     sendSettings();
   });
 
