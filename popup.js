@@ -13,6 +13,8 @@
   const minVal    = document.getElementById('min-val');
   const maxVal    = document.getElementById('max-val');
   const resetBtn  = document.getElementById('reset');
+  const showOverlayCheckbox = document.getElementById('show-overlay');
+  const autoEnableCheckbox = document.getElementById('auto-enable');
 
   // --- Communicate with content script ---
   function sendToTab(msg) {
@@ -55,6 +57,23 @@
   minSlider.addEventListener('input', sendSettings);
   maxSlider.addEventListener('input', sendSettings);
 
+  // --- Settings checkboxes ---
+  function loadSettings() {
+    chrome.storage.local.get(['showOverlay', 'autoEnable'], (data) => {
+      showOverlayCheckbox.checked = data.showOverlay !== false;
+      autoEnableCheckbox.checked = data.autoEnable === true;
+    });
+  }
+
+  showOverlayCheckbox.addEventListener('change', () => {
+    chrome.storage.local.set({ showOverlay: showOverlayCheckbox.checked });
+    sendToTab({ type: 'updateSettings', settings: { showOverlay: showOverlayCheckbox.checked } });
+  });
+
+  autoEnableCheckbox.addEventListener('change', () => {
+    chrome.storage.local.set({ autoEnable: autoEnableCheckbox.checked });
+  });
+
   // --- Reset ---
   resetBtn.addEventListener('click', () => {
     targetSlider.value = DEFAULTS.targetRate;
@@ -82,6 +101,7 @@
     }
   }
 
+  loadSettings();
   pollStatus();
   pollTimer = setInterval(async () => {
     const resp = await sendToTab({ type: 'getStatus' });

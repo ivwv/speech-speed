@@ -13,10 +13,12 @@
   // ===== State =====
   let enabled = false;
   let settings = { ...DEFAULTS };
+  let overlaySettings = { showOverlay: true, autoEnable: false };
   let currentSpeed = 1.0;
   let lastSpeechTime = 0;
 
   let activeVideo = null;
+  let videoRemovalObserver = null;
   let audioCtx = null;
   let sourceNode = null;
   let analyserNode = null;
@@ -79,10 +81,16 @@
 
   // ===== Storage =====
   log('Content script loaded on %s', location.href);
-  chrome.storage.local.get(['enabled', 'settings'], (data) => {
+  chrome.storage.local.get(['enabled', 'settings', 'showOverlay', 'autoEnable'], (data) => {
     if (data.enabled !== undefined) enabled = data.enabled;
     if (data.settings) settings = { ...DEFAULTS, ...data.settings };
-    log('Stored state: enabled=%s  settings=%o', enabled, settings);
+    overlaySettings.showOverlay = data.showOverlay !== false;
+    overlaySettings.autoEnable = data.autoEnable === true;
+    if (overlaySettings.autoEnable && !enabled) {
+      enabled = true;
+      chrome.storage.local.set({ enabled: true });
+    }
+    log('Stored state: enabled=%s  settings=%o  showOverlay=%s  autoEnable=%s', enabled, settings, overlaySettings.showOverlay, overlaySettings.autoEnable);
     if (enabled) init();
   });
 
@@ -93,6 +101,19 @@
     }
     if (changes.settings) {
       settings = { ...DEFAULTS, ...changes.settings.newValue };
+    }
+    if (changes.showOverlay !== undefined) {
+      overlaySettings.showOverlay = changes.showOverlay.newValue;
+      if (overlaySettings.showOverlay) {
+        if (activeVideo && audioCtx && !overlayHost) {
+          createOverlay();
+        }
+      } else {
+        removeOverlay();
+      }
+    }
+    if (changes.autoEnable !== undefined) {
+      overlaySettings.autoEnable = changes.autoEnable.newValue;
     }
   });
 
@@ -107,6 +128,9 @@
       if (enabled) init(); else teardown();
       sendResponse({ enabled });
     } else if (msg.type === 'updateSettings') {
+      if (msg.settings.showOverlay !== undefined) {
+        overlaySettings.showOverlay = msg.settings.showOverlay;
+      }
       settings = { ...DEFAULTS, ...msg.settings };
       chrome.storage.local.set({ settings });
       sendResponse({ ok: true });
@@ -124,11 +148,45 @@
 
   function observeDom() {
     if (domObserver) return;
+    let checkTimeout = null;
     domObserver = new MutationObserver(() => {
-      if (!activeVideo || !document.contains(activeVideo)) {
-        teardownAudio();
-        findAndAttach();
-      }
+      if (checkTimeout) return;
+      checkTimeout = setTimeout(() => {
+        checkTimeout = null;
+        const videos = document.querySelectorAll('video');
+        if (videos.length === 0) {
+          if (activeVideo) {
+            teardownAudio();
+            activeVideo = null;
+          }
+          return;
+        }
+        
+        let currentBest = null;
+        let bestArea = 0;
+        videos.forEach((v) => {
+          const area = v.clientWidth * v.clientHeight;
+          if (area > bestArea) { currentBest = v; bestArea = area; }
+        });
+        if (!currentBest) currentBest = videos[0];
+        
+        if (currentBest !== activeVideo || !audioCtx) {
+          teardownAudio();
+          activeVideo = currentBest;
+          diag.videoSrc = (activeVideo.src || activeVideo.currentSrc || '').slice(0, 80);
+          if (activeVideo.readyState >= 2) {
+            setupAudio(activeVideo);
+          } else {
+            const onCanPlay = function() {
+              activeVideo.removeEventListener('canplay', onCanPlay);
+              if (document.contains(activeVideo)) {
+                setupAudio(activeVideo);
+              }
+            };
+            activeVideo.addEventListener('canplay', onCanPlay);
+          }
+        }
+      }, 300);
     });
     domObserver.observe(document.documentElement, { childList: true, subtree: true });
   }
@@ -136,7 +194,14 @@
   function findAndAttach() {
     const videos = document.querySelectorAll('video');
     log('Scanning for videos: found %d', videos.length);
-    if (videos.length === 0) { diag.stage = 'waiting for <video>'; return; }
+    if (videos.length === 0) { 
+      if (activeVideo) {
+        teardownAudio();
+        activeVideo = null;
+      }
+      diag.stage = 'waiting for <video>'; 
+      return; 
+    }
 
     let best = null;
     let bestArea = 0;
@@ -156,10 +221,13 @@
       setupAudio(activeVideo);
     } else {
       diag.stage = 'waiting for canplay';
-      activeVideo.addEventListener('canplay', function onCanPlay() {
+      const onCanPlay = function() {
         activeVideo.removeEventListener('canplay', onCanPlay);
-        setupAudio(activeVideo);
-      });
+        if (activeVideo === best && document.contains(activeVideo)) {
+          setupAudio(activeVideo);
+        }
+      };
+      activeVideo.addEventListener('canplay', onCanPlay);
     }
   }
 
@@ -217,10 +285,41 @@
       diag.stage = 'running';
       log('Pipeline running. target=%s min=%s max=%s', settings.targetRate, settings.minSpeed, settings.maxSpeed);
 
-      createOverlay();
+      if (overlaySettings.showOverlay) {
+        createOverlay();
+      }
       currentSpeed = video.playbackRate || 1;
       lastSpeechTime = performance.now() / 1000;
       logEntries = [];
+
+      if (videoRemovalObserver) {
+        videoRemovalObserver.disconnect();
+        videoRemovalObserver = null;
+      }
+      videoRemovalObserver = new MutationObserver(() => {
+        if (!document.contains(video)) {
+          teardownAudio();
+          if (activeVideo === video) {
+            activeVideo = null;
+          }
+          if (videoRemovalObserver) {
+            videoRemovalObserver.disconnect();
+            videoRemovalObserver = null;
+          }
+          setTimeout(() => findAndAttach(), 500);
+        }
+      });
+      videoRemovalObserver.observe(document.documentElement, { childList: true, subtree: true });
+
+      video.addEventListener('pause', function onPause() {
+        if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+      }, { once: true });
+      
+      video.addEventListener('emptied', function onEmptied() {
+        teardownAudio();
+        activeVideo = null;
+        setTimeout(() => findAndAttach(), 500);
+      }, { once: true });
     } catch (err) {
       diag.stage = 'ERROR: ' + err.message;
       log('FAILED: %O', err);
@@ -229,7 +328,7 @@
 
   // ===== Syllable detection =====
   function pollAnalyser(buffer) {
-    if (!analyserNode) return;
+    if (!analyserNode || !audioCtx || !enabled) return;
     analyserNode.getFloatTimeDomainData(buffer);
     diag.pollTicks++;
     const now = performance.now();
@@ -266,7 +365,7 @@
     diag.lastPeakCount = detector.crossings.length;
     diag.lastMeasuredRate = syllableRate;
 
-    if (!enabled || !activeVideo) return;
+    if (!enabled || !activeVideo || !audioCtx) return;
 
     const shouldLog = diag.pollTicks % 66 === 0;
     const nowSec = now / 1000;
@@ -325,19 +424,42 @@
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
     if (analyserNode) { try { analyserNode.disconnect(); } catch {} analyserNode = null; }
     if (sourceNode) { try { sourceNode.disconnect(); } catch {} sourceNode = null; }
-    if (audioCtx) { try { audioCtx.close(); } catch {} audioCtx = null; }
-    if (activeVideo && currentSpeed !== 1) {
+    if (audioCtx) { 
+      try { audioCtx.close(); } catch {} 
+      audioCtx = null; 
+    }
+    if (activeVideo) {
       try { activeVideo.playbackRate = 1; } catch {}
     }
     currentSpeed = 1;
     diag.stage = 'idle';
     diag.pollTicks = 0;
+    diag.streamTracks = 0;
+    diag.lastEnergy = 0;
+    diag.lastThreshold = 0;
+    diag.lastPeakCount = 0;
+    diag.lastMeasuredRate = 0;
+    diag.lastNaturalRate = 0;
+    diag.lastTargetSpeed = 0;
+    diag.silenceSec = 0;
     removeOverlay();
   }
 
   function teardown() {
     teardownAudio();
     activeVideo = null;
+    if (videoRemovalObserver) {
+      videoRemovalObserver.disconnect();
+      videoRemovalObserver = null;
+    }
+    detector.envelope = 0;
+    detector.hpPrevInput = 0;
+    detector.hpPrevOutput = 0;
+    detector.prevFiltered = 0;
+    detector.crossings = [];
+    detector.lastCrossingTime = -1000;
+    logEntries = [];
+    lastLogTime = 0;
     if (domObserver) { domObserver.disconnect(); domObserver = null; }
   }
 
@@ -365,7 +487,7 @@
           top: 10px;
           right: 10px;
           z-index: 2147483647;
-          background: rgba(0, 0, 0, 0.88);
+          background: rgba(0, 0, 0, 0.25);
           color: #fff;
           font: 12px/1.4 'SF Mono', 'Menlo', 'Consolas', monospace;
           padding: 10px 14px;
