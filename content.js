@@ -79,6 +79,14 @@
     console.log(`%c[SpeechSpeed]%c ${msg}`, 'color:#4ade80;font-weight:bold', 'color:inherit', ...args);
   }
 
+  function updateIconState(state) {
+    try {
+      chrome.runtime.sendMessage({ type: 'iconState', state: state });
+    } catch (e) {
+      // Ignore errors when background isn't available
+    }
+  }
+
   // ===== Storage =====
   log('Content script loaded on %s', location.href);
   chrome.storage.local.get(['enabled', 'settings', 'showOverlay', 'autoEnable'], (data) => {
@@ -216,6 +224,7 @@
     activeVideo = best;
     diag.videoSrc = (activeVideo.src || activeVideo.currentSrc || '').slice(0, 80);
     log('Attaching to video (%d×%d)', activeVideo.clientWidth, activeVideo.clientHeight);
+    updateIconState('video');
 
     if (activeVideo.readyState >= 2) {
       setupAudio(activeVideo);
@@ -284,6 +293,7 @@
 
       diag.stage = 'running';
       log('Pipeline running. target=%s min=%s max=%s', settings.targetRate, settings.minSpeed, settings.maxSpeed);
+      updateIconState('speeding');
 
       if (overlaySettings.showOverlay) {
         createOverlay();
@@ -433,6 +443,7 @@
     }
     currentSpeed = 1;
     diag.stage = 'idle';
+    updateIconState('idle');
     diag.pollTicks = 0;
     diag.streamTracks = 0;
     diag.lastEnergy = 0;

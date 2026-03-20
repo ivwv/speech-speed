@@ -4,6 +4,9 @@
   "version": "1.0",
   "description": "Automatically adjusts video playback speed based on how fast the speaker is talking",
   "permissions": ["storage", "activeTab"],
+  "background": {
+    "service_worker": "background.js"
+  },
   "action": {
     "default_popup": "popup.html",
     "default_title": "Speech Speed"
