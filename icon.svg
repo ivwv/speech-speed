@@ -1,0 +1,24 @@
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="128" height="128" rx="24" fill="#ef4444"/>
+  <!-- 音波/语速波形 -->
+  <rect x="25" y="54" width="8" height="20" rx="4" fill="white">
+    <animate attributeName="height" values="20;40;20" dur="1s" repeatCount="indefinite" />
+    <animate attributeName="y" values="54;44;54" dur="1s" repeatCount="indefinite" />
+  </rect>
+  <rect x="43" y="44" width="8" height="40" rx="4" fill="white">
+    <animate attributeName="height" values="40;70;40" dur="1.2s" repeatCount="indefinite" />
+    <animate attributeName="y" values="44;29;44" dur="1.2s" repeatCount="indefinite" />
+  </rect>
+  <rect x="61" y="34" width="8" height="60" rx="4" fill="white">
+    <animate attributeName="height" values="60;90;60" dur="0.8s" repeatCount="indefinite" />
+    <animate attributeName="y" values="34;19;34" dur="0.8s" repeatCount="indefinite" />
+  </rect>
+  <rect x="79" y="44" width="8" height="40" rx="4" fill="white">
+    <animate attributeName="height" values="40;60;40" dur="1.5s" repeatCount="indefinite" />
+    <animate attributeName="y" values="44;34;44" dur="1.5s" repeatCount="indefinite" />
+  </rect>
+  <rect x="97" y="54" width="8" height="20" rx="4" fill="white">
+    <animate attributeName="height" values="20;35;20" dur="1.1s" repeatCount="indefinite" />
+    <animate attributeName="y" values="54;46.5;54" dur="1.1s" repeatCount="indefinite" />
+  </rect>
+</svg>

@@ -6,17 +6,18 @@
 </head>
 <body>
   <div class="header">
-    <h1>Speech Speed</h1>
-    <button id="toggle" class="toggle off">OFF</button>
+    <img src="icon.svg" alt="icon" style="width: 24px; height: 24px; border-radius: 4px; margin-right: 8px;">
+    <h1>语速控制</h1>
+    <button id="toggle" class="toggle off">关闭</button>
   </div>
 
   <div id="status" class="status">
     <div class="stat-row">
-      <span class="stat-label">Speech rate</span>
+      <span class="stat-label">当前语速</span>
       <span class="stat-val" id="cur-rate">--</span>
     </div>
     <div class="stat-row">
-      <span class="stat-label">Playback</span>
+      <span class="stat-label">当前倍速</span>
       <span class="stat-val" id="cur-speed">1.00x</span>
     </div>
   </div>
@@ -24,30 +25,30 @@
   <div class="settings-group">
     <label class="checkbox-label">
       <input type="checkbox" id="show-overlay">
-      <span class="ctrl-label">Show overlay popup</span>
+      <span class="ctrl-label">显示悬浮窗</span>
     </label>
     <label class="checkbox-label">
       <input type="checkbox" id="auto-enable">
-      <span class="ctrl-label">Auto-enable on sites</span>
+      <span class="ctrl-label">在网站上自动启用</span>
     </label>
   </div>
 
   <div class="controls">
     <label>
-      <span class="ctrl-label">Target rate <span class="ctrl-val" id="target-val">9</span> syl/s</span>
+      <span class="ctrl-label">目标语速 <span class="ctrl-val" id="target-val">9</span> 音节/秒</span>
       <input type="range" id="target-rate" min="4" max="14" step="0.5" value="9">
     </label>
     <label>
-      <span class="ctrl-label">Min speed <span class="ctrl-val" id="min-val">1.0</span>x</span>
+      <span class="ctrl-label">最小倍速 <span class="ctrl-val" id="min-val">1.0</span>x</span>
       <input type="range" id="min-speed" min="1" max="2" step="0.1" value="1">
     </label>
     <label>
-      <span class="ctrl-label">Max speed <span class="ctrl-val" id="max-val">3.5</span>x</span>
+      <span class="ctrl-label">最大倍速 <span class="ctrl-val" id="max-val">3.5</span>x</span>
       <input type="range" id="max-speed" min="1.5" max="5" step="0.25" value="3.5">
     </label>
   </div>
 
-  <button id="reset" class="reset">Reset defaults</button>
+  <button id="reset" class="reset">重置为默认值</button>
 
   <script src="popup.js"></script>
 </body>

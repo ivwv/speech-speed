@@ -36,7 +36,7 @@
   });
 
   function updateToggle(on) {
-    toggleBtn.textContent = on ? 'ON' : 'OFF';
+    toggleBtn.textContent = on ? '开启' : '关闭';
     toggleBtn.className = 'toggle ' + (on ? 'on' : 'off');
   }
 
@@ -111,6 +111,9 @@
     if (resp) {
       updateToggle(resp.enabled);
       curSpeed.textContent = resp.currentSpeed.toFixed(2) + 'x';
+      curRate.textContent = (resp.hasVideo && resp.enabled && resp.currentRate > 0) 
+        ? resp.currentRate.toFixed(1) 
+        : '--';
       if (resp.settings) {
         targetSlider.value = resp.settings.targetRate;
         minSlider.value    = resp.settings.minSpeed;
@@ -128,6 +131,9 @@
     const resp = await sendToTab({ type: 'getStatus' });
     if (resp) {
       curSpeed.textContent = resp.currentSpeed.toFixed(2) + 'x';
+      curRate.textContent = (resp.hasVideo && resp.enabled && resp.currentRate > 0) 
+        ? resp.currentRate.toFixed(1) 
+        : '--';
     }
   }, 500);
 

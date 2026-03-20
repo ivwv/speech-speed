@@ -62,7 +62,7 @@
 
   // Diagnostics
   let diag = {
-    stage: 'idle',
+    stage: '空闲',
     videoSrc: '',
     streamTracks: 0,
     pollTicks: 0,
@@ -135,7 +135,7 @@
   // ===== Message handling (popup ↔ content) =====
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg.type === 'getStatus') {
-      sendResponse({ enabled, currentSpeed, hasVideo: !!activeVideo, settings });
+      sendResponse({ enabled, currentSpeed, currentRate: diag.lastNaturalRate, hasVideo: !!activeVideo, settings });
     } else if (msg.type === 'toggle') {
       enabled = !enabled;
       log('Toggled: enabled=%s', enabled);
@@ -242,7 +242,7 @@
         teardownAudio();
         activeVideo = null;
       }
-      diag.stage = 'waiting for <video>';
+      diag.stage = '等待 <video>';
       return;
     }
     attachToVideo(best);
@@ -260,7 +260,7 @@
     if (activeVideo.readyState >= 2) {
       setupAudio(activeVideo);
     } else {
-      diag.stage = 'waiting for canplay';
+      diag.stage = '等待播放';
       const onCanPlay = function() {
         if (activeVideo === video) {
           setupAudio(activeVideo);
@@ -274,12 +274,12 @@
   // ===== Audio pipeline =====
   async function setupAudio(video) {
     try {
-      diag.stage = 'creating AudioContext';
+      diag.stage = '创建 AudioContext';
       audioCtx = new AudioContext();
       if (audioCtx.state === 'suspended') await audioCtx.resume();
       log('AudioContext: %s, %d Hz', audioCtx.state, audioCtx.sampleRate);
 
-      diag.stage = 'capturing stream';
+      diag.stage = '捕获流';
       let stream;
       try { stream = video.captureStream(); }
       catch { stream = video.mozCaptureStream(); }
@@ -289,7 +289,7 @@
       log('MediaStream: %d audio tracks', audioTracks.length);
       if (audioTracks.length === 0) {
         log('WARNING: No audio tracks!');
-        diag.stage = 'ERROR: no audio tracks';
+        diag.stage = '错误：无音频轨道';
       }
 
       sourceNode = audioCtx.createMediaStreamSource(stream);
@@ -352,7 +352,7 @@
          pollTimer = setInterval(() => pollAnalyser(buf), 30);
        }
 
-       diag.stage = 'running';
+       diag.stage = '运行中';
        log('Pipeline running. target=%s min=%s max=%s', settings.targetRate, settings.minSpeed, settings.maxSpeed);
        updateIconState('speeding');
 
@@ -363,7 +363,7 @@
        lastSpeechTime = performance.now() / 1000;
        logEntries = [];
     } catch (err) {
-      diag.stage = 'ERROR: ' + err.message;
+      diag.stage = '错误：' + err.message;
       log('FAILED: %O', err);
     }
   }
@@ -478,7 +478,7 @@
       }
     }
     currentSpeed = 1;
-    diag.stage = 'idle';
+    diag.stage = '空闲';
     updateIconState('idle');
     diag.pollTicks = 0;
     diag.streamTracks = 0;
@@ -515,6 +515,13 @@
     const rounded = Math.round(currentSpeed * 100) / 100;
     if (activeVideo.playbackRate !== rounded) {
       activeVideo.playbackRate = rounded;
+      
+      // Update browser action badge
+      try {
+        chrome.runtime.sendMessage({ type: 'updateBadge', speed: rounded });
+      } catch (e) {
+        // Background might be disconnected
+      }
     }
   }
 
@@ -638,24 +645,24 @@
         <div class="ss-hero">
           <div class="ss-hero-item">
             <div class="num speed-color" id="ss-speed">1.00x</div>
-            <div class="lbl">Speed</div>
+            <div class="lbl">当前倍速</div>
           </div>
           <div class="ss-hero-item">
             <div class="num" id="ss-rate" style="color:#60a5fa">--</div>
-            <div class="lbl">syl/s (natural)</div>
+            <div class="lbl">原速 (音节/秒)</div>
           </div>
         </div>
 
         <div class="ss-state" id="ss-state">--</div>
         <div class="ss-bar-wrap"><div class="ss-bar" id="ss-bar"></div></div>
 
-        <div class="ss-log-title">History (rate → speed)</div>
+        <div class="ss-log-title">历史记录 (语速 → 倍速)</div>
         <div class="ss-log" id="ss-log"></div>
 
         <div class="ss-stats">
-          <span id="ss-peaks">peaks: 0</span>
-          <span id="ss-ticks">ticks: 0</span>
-          <span id="ss-stage">idle</span>
+          <span id="ss-peaks">音节: 0</span>
+          <span id="ss-ticks">采样: 0</span>
+          <span id="ss-stage">空闲</span>
         </div>
       </div>
     `;
@@ -684,10 +691,10 @@
 
     // State
     if (nr > 0) {
-      e.state.textContent = 'SPEAKING';
+      e.state.textContent = '正在说话';
       e.state.className = 'ss-state speaking';
     } else {
-      e.state.textContent = 'SILENCE ' + diag.silenceSec.toFixed(0) + 's';
+      e.state.textContent = '静音 ' + diag.silenceSec.toFixed(0) + '秒';
       e.state.className = 'ss-state silence';
     }
 
@@ -700,7 +707,7 @@
     for (const entry of logEntries) {
       const isSilence = entry.state === 'silence';
       const cls = isSilence ? 'ss-log-row log-silence' : 'ss-log-row';
-      const rateStr = isSilence ? 'silence' : entry.naturalRate.toFixed(1) + ' syl/s';
+      const rateStr = isSilence ? '静音' : entry.naturalRate.toFixed(1) + ' 音节/秒';
       html += `<div class="${cls}">` +
         `<span class="log-rate">${rateStr}</span>` +
         `<span class="log-arrow">→</span>` +
@@ -710,8 +717,8 @@
     e.log.innerHTML = html;
 
     // Stats
-    e.peaks.textContent = 'xings: ' + diag.lastPeakCount;
-    e.ticks.textContent = 'ticks: ' + diag.pollTicks;
+    e.peaks.textContent = '音节: ' + diag.lastPeakCount;
+    e.ticks.textContent = '采样: ' + diag.pollTicks;
     e.stage.textContent = diag.stage;
   }
 

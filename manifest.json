@@ -1,15 +1,27 @@
 {
   "manifest_version": 3,
-  "name": "Speech Speed",
+  "name": "语速控制 (Speech Speed)",
   "version": "1.0",
-  "description": "Automatically adjusts video playback speed based on how fast the speaker is talking",
+  "description": "根据说话者的语速自动调整视频播放速度",
+  "icons": {
+    "16": "icon.svg",
+    "32": "icon.svg",
+    "48": "icon.svg",
+    "128": "icon.svg"
+  },
   "permissions": ["storage", "activeTab"],
   "background": {
     "service_worker": "background.js"
   },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Speech Speed"
+    "default_title": "语速控制",
+    "default_icon": {
+      "16": "icon.svg",
+      "32": "icon.svg",
+      "48": "icon.svg",
+      "128": "icon.svg"
+    }
   },
   "content_scripts": [
     {
