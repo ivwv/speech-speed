@@ -1,12 +1,123 @@
-# Speech Speed
+# Speech Speed / 语速控制
 
-A Chrome extension that dynamically adjusts video playback speed based on how fast the speaker is talking. Slow speakers get sped up more; fast speakers get sped up less. The goal is to normalize speech to a comfortable listening rate so you can consume video content faster without rapid passages becoming unintelligible.
+一个面向 **Chrome 浏览器** 的视频语速自动控制扩展。它会根据视频中说话者的语速，动态调整 `<video>` 的播放倍速：说话慢时自动加速，说话快时降低加速幅度，让不同视频尽量保持更舒适、稳定的听感。
 
-## How it works
+本项目基于 GitHub 上已有开源项目继续开发，当前方向是：**适配 Chrome、尽量兼容各种视频网站、减少用户手动操作，实现开启后无感使用**。
 
-### Audio capture
+## 当前兼容性
 
-When enabled for the current site, the content script finds the best visible `<video>` element and taps its audio output with `HTMLMediaElement.captureStream()`. The stream is analyzed through Web Audio:
+| 浏览器 | 状态 | 说明 |
+|---|---|---|
+| Chrome | 主要支持 | 当前开发和测试目标，使用 Manifest V3。 |
+| Edge | 可能可用 | Edge 基于 Chromium，通常可以加载 Chrome 扩展，但不是当前主要适配目标。 |
+| Firefox | 不作为兼容目标 | 当前使用 Chrome MV3 `background.service_worker` 和 `chrome.*` API，不针对 Firefox 做兼容。 |
+
+## 核心功能
+
+- 按网站单独开启/关闭，不再使用单一全局开关。
+- 自动检测页面中的视频元素，并优先绑定正在播放、可见、面积较大的视频。
+- 本地分析视频音频特征，估算说话语速。
+- 根据目标语速自动调整视频播放倍速。
+- 视频暂停、结束或关闭站点开关时自动停止分析。
+- 可显示页面悬浮窗，展示当前倍速、估算语速、说话/静音状态。
+- 扩展图标 badge 显示当前倍速或错误状态。
+- 支持调试日志，默认关闭。
+- 不上传音频、不录音、不请求远程服务。
+
+## 安装手册
+
+### 1. 下载项目
+
+下载或克隆本仓库到本地，例如：
+
+```bash
+git clone <your-repo-url>
+```
+
+### 2. 在 Chrome 中加载扩展
+
+1. 打开 Chrome。
+2. 地址栏输入：`chrome://extensions/`
+3. 打开右上角 **开发者模式**。
+4. 点击 **加载已解压的扩展程序**。
+5. 选择本项目目录，也就是包含 `manifest.json` 的目录。
+6. 浏览器工具栏会出现“语速控制”扩展图标。
+
+### 3. 更新扩展
+
+如果你修改了代码或拉取了新版本：
+
+1. 进入 `chrome://extensions/`。
+2. 找到“语速控制”。
+3. 点击刷新按钮。
+4. 已打开的视频页面建议刷新一次，让新的 content script 生效。
+
+## 使用手册
+
+### 开启当前网站
+
+1. 打开一个普通网页或视频网站页面。
+2. 播放一个视频。
+3. 点击浏览器工具栏中的“语速控制”图标。
+4. 点击 **此网站关闭**，切换为 **此网站开启**。
+5. 插件会开始检测当前页面的视频和音频。
+
+开启后，该网站的选择会保存到 `chrome.storage.local`。以后再次访问同一网站时，会沿用该网站的开启/关闭状态。
+
+### 关闭当前网站
+
+1. 在该网站页面点击扩展图标。
+2. 点击 **此网站开启**，切换为 **此网站关闭**。
+3. 插件会停止音频分析、关闭悬浮窗，并尽量恢复插件设置前的视频倍速。
+
+### 日常无感使用方式
+
+推荐用法：
+
+1. 第一次访问某个视频网站时，手动开启该网站。
+2. 后续在同一网站播放视频时，插件自动工作。
+3. 不想使用的网站手动关闭即可。
+
+如果你希望所有未配置过的新网站都自动启用，可以打开：
+
+- **所有新网站默认自动启用**
+
+但更推荐按网站手动开启，这样更可控，也更不容易在不需要的网站误触发。
+
+## 弹窗设置说明
+
+| 设置 | 说明 |
+|---|---|
+| 此网站开启/关闭 | 控制当前网站是否启用插件，手动选择优先级最高。 |
+| 显示悬浮窗 | 是否在网页右上角显示当前倍速、语速和状态。 |
+| 所有新网站默认自动启用 | 对没有手动设置过的新网站默认开启。 |
+| 启用调试日志 | 在 DevTools 控制台输出调试信息，排查问题时使用。 |
+| 目标语速 | 希望最终听到的语速，默认 `9` 音节/秒。 |
+| 最小倍速 | 自动调整时允许的最低播放倍速，默认 `1.0x`。 |
+| 最大倍速 | 自动调整时允许的最高播放倍速，默认 `3.5x`。 |
+| 重置为默认值 | 恢复默认参数、显示悬浮窗、关闭默认自动启用和调试日志。 |
+
+## 状态说明
+
+弹窗中会显示当前网站、运行状态和错误提示。常见状态如下：
+
+| 状态 | 含义 | 建议操作 |
+|---|---|---|
+| 当前网站已关闭 | 当前网站没有启用插件。 | 点击按钮开启当前网站。 |
+| 已开启 · 未找到可用视频 | 页面中暂未检测到合适的视频。 | 播放视频，或刷新页面后重试。 |
+| 等待音频轨道 | 找到视频，但暂时没有检测到音轨。 | 确认视频未静音，并已开始播放。 |
+| 运行中 · 视频播放中 | 插件正在分析音频并调整倍速。 | 正常使用即可。 |
+| 等待播放 | 找到视频，但视频当前暂停。 | 播放视频后会继续分析。 |
+| 无法连接当前页面 | popup 无法和页面 content script 通信。 | 刷新页面；Chrome 内部页面、扩展商店和部分受保护页面不可用。 |
+| 音频捕获失败 | 浏览器或页面阻止了音频捕获。 | 检查视频是否静音；DRM/受保护视频可能无法分析。 |
+
+## 工作原理
+
+### 音频捕获
+
+当当前网站启用后，content script 会寻找最合适的 `<video>` 元素，并使用 `HTMLMediaElement.captureStream()` 获取视频音频流。在支持的浏览器中，Firefox 风格的 `mozCaptureStream` 也有代码兜底，但本项目不面向 Firefox 做兼容发布。
+
+音频分析链路：
 
 ```text
 video.captureStream()
@@ -16,23 +127,23 @@ video.captureStream()
         → AnalyserNode
 ```
 
-The 300-3000 Hz bandpass focuses on the vowel/formant region where syllable energy is concentrated.
+300-3000 Hz 频段主要覆盖人声中较有用的能量变化区域，适合做轻量级语速估算。
 
-### Syllable rate detection
+### 语速检测
 
-The current detector measures modulation in the audio energy envelope:
+当前检测器基于音频能量包络的变化估算语速：
 
-1. Compute RMS energy from the analyser buffer.
-2. Smooth the envelope for silence detection.
-3. High-pass the raw RMS signal to remove slow level drift.
-4. Count positive-going zero-crossings in the filtered energy signal.
-5. Estimate syllables per second over a sliding time window.
+1. 从 analyser buffer 中计算 RMS 能量。
+2. 平滑能量包络，用于静音检测。
+3. 对 RMS 信号做高通处理，减少慢速音量漂移影响。
+4. 统计过滤后能量信号的正向过零变化。
+5. 在滑动窗口内估算每秒音节数。
 
-This avoids the undercounting that simple threshold peak detection can produce during fast continuous speech.
+这种方法不是完整语音识别，不理解语义，也不会转写音频，只做本地数值分析。
 
-### Speed mapping
+### 倍速映射
 
-The detected rate is converted into playback speed:
+检测到的语速会转换为目标播放倍速：
 
 ```js
 naturalRate = measuredRate / currentPlaybackSpeed
@@ -41,44 +152,13 @@ targetSpeed = clamp(targetSpeed, minSpeed, maxSpeed)
 currentSpeed += smoothingAlpha * (targetSpeed - currentSpeed)
 ```
 
-The `measuredRate / currentPlaybackSpeed` correction matters because captured audio reflects the current playback speed. If the video is already playing at 2x, the measured syllable rate is also doubled.
+其中 `measuredRate / currentPlaybackSpeed` 很重要，因为捕获到的音频已经受当前播放倍速影响。例如视频正在 `2x` 播放时，测得的音节速率也会接近翻倍。
 
-During silence, the speed gradually drifts back toward 1x after the configured silence hold period.
+视频静音或长时间无人声时，倍速会在设定的静音保持时间后逐步回落到 `1x`。
 
-## Installation
+## 站点级设置逻辑
 
-1. Clone or download this repository.
-2. Open `chrome://extensions` in Chrome.
-3. Enable **Developer mode**.
-4. Click **Load unpacked** and select this `speech-speed` directory.
-5. Open a normal webpage with a video, click the extension icon, and enable it for that site.
-
-## Files
-
-| File | Purpose |
-|---|---|
-| `manifest.json` | Manifest V3 extension config |
-| `content.js` | Content script: site state, video selection, audio analysis, speed control, overlay |
-| `popup.html/js/css` | Extension popup: per-site toggle, status messages, settings |
-| `background.js` | Service worker: per-tab badge updates |
-
-## Configuration
-
-The popup exposes:
-
-- **此网站开启/关闭**: controls the current site's setting only.
-- **显示悬浮窗**: shows or hides the in-page status overlay.
-- **新网站默认自动启用**: enables the extension by default on new sites that do not yet have an explicit preference.
-- **启用调试日志**: enables sanitized debug logs in DevTools; off by default.
-- **目标语速** (4-14 syl/s, default 9): desired effective syllable rate.
-- **最小倍速** (default 1.0): playback speed floor.
-- **最大倍速** (default 3.5): playback speed ceiling.
-
-Settings are validated before storage. Invalid values, `NaN`, or `minSpeed > maxSpeed` are corrected before they can affect playback.
-
-## Site-level enable behavior
-
-The extension no longer treats enable/disable as a single global switch. It stores per-site preferences in `chrome.storage.local`:
+插件使用 `chrome.storage.local` 保存配置。站点开关按 origin 保存，例如：
 
 ```js
 sitePrefs: {
@@ -89,77 +169,139 @@ sitePrefs: {
 }
 ```
 
-The effective state is:
+生效优先级：
 
 ```js
 sitePrefs[origin]?.enabled ?? defaultAutoEnable === true
 ```
 
-This means **manual site choices win**. If default auto-enable is on but you turn a specific site off, that site stays off after reloads.
+也就是说：
 
-## Status and diagnostics
+1. 用户手动设置过的网站优先级最高。
+2. 没有手动设置过的网站，才会使用“所有新网站默认自动启用”。
+3. 默认情况下，新网站关闭。
 
-The popup now shows user-readable states instead of silently failing:
+## 隐私说明
 
-- current site / unsupported page
-- current enable source
-- waiting for video
-- no video found
-- no audio track
-- audio capture failure
-- running / paused state
+插件的音频处理在当前页面本地完成：
 
-The overlay shows the current speed, estimated original speech rate, speech/silence state, and a small recent history log. UI updates are throttled so the overlay is not rebuilt on every audio analysis tick.
+- 不录音。
+- 不保存音频内容。
+- 不上传音频。
+- 不调用远程 AI 或服务器接口。
+- 只保存插件设置、站点开关和基础运行状态。
 
-## Performance behavior
+需要注意的是，插件会向匹配页面注入 content script，用于检测视频和在启用后分析视频音频特征。当前 manifest 使用 `<all_urls>`，是为了在不同视频网站上尽量无感工作。
 
-The extension avoids work when disabled for the current site:
+## 性能行为
 
-- no audio context
-- no polling interval
-- no overlay
-- no broad DOM observer
+插件在当前网站关闭时会尽量避免额外工作：
 
-When enabled:
+- 不创建 AudioContext。
+- 不启动音频分析轮询。
+- 不显示悬浮窗。
+- 不开启广泛 DOM observer。
 
-- video changes are primarily detected through the browser's `play` event
-- DOM mutation scans are filtered to mutations involving video elements
-- audio analysis runs on a fixed polling interval
-- overlay and badge updates are throttled
-- badge updates are per tab, so one tab does not leak its speed into another tab's badge
+插件启用后：
 
-## Tuning guide
+- 主要通过浏览器 `play` 事件发现正在播放的视频。
+- 通过 MutationObserver 辅助处理 SPA 页面中的视频变化。
+- 音频分析轮询间隔为 `80ms`。
+- 悬浮窗和 badge 更新有节流，避免每次音频分析都重绘界面。
+- badge 按标签页更新，避免不同页面状态互相污染。
 
-Most detector parameters live in `content.js`.
+## 已知限制
 
-| Parameter | Default | What it does |
+- **DRM/受保护视频**：部分加密视频可能阻止 `captureStream()`，插件无法分析。
+- **Chrome 内部页面**：例如 `chrome://` 页面无法注入扩展脚本。
+- **Chrome Web Store 页面**：浏览器限制扩展注入。
+- **视频静音或无音轨**：无法检测语速。
+- **音乐、背景音、掌声**：可能被误判为语音节奏。
+- **多人同时说话**：检测的是整体能量变化，不区分说话人。
+- **多视频页面**：插件会自动选择最可能的视频，但在广告、小窗、预览视频并存时可能选错。
+- **SPA 切换页面**：通常会重新检测视频，但可能存在短暂延迟。
+
+## 排障手册
+
+### 点击扩展后显示“无法连接当前页面”
+
+可能原因：
+
+- 页面在安装或更新扩展前已经打开。
+- 当前页面是 Chrome 内部页面、扩展商店或浏览器受保护页面。
+- 页面还没有完成加载。
+
+处理方式：
+
+1. 刷新当前页面。
+2. 确认页面是普通 `http` 或 `https` 网页。
+3. 回到 `chrome://extensions/`，确认扩展已启用。
+
+### 显示“未找到可用视频”
+
+处理方式：
+
+1. 先播放视频。
+2. 等待 1-2 秒。
+3. 如果页面是单页应用，尝试刷新页面。
+4. 确认页面中使用的是标准 `<video>` 播放器。
+
+### 显示“等待音频轨道”或“音频捕获失败”
+
+处理方式：
+
+1. 确认视频没有静音。
+2. 确认视频已经开始播放。
+3. 尝试关闭其他倍速、音频处理类扩展。
+4. 如果是 DRM/付费/受保护视频，可能无法支持。
+
+### 倍速变化太明显
+
+可以尝试：
+
+1. 降低最大倍速。
+2. 提高最小倍速，让变化范围变小。
+3. 将目标语速调低一点。
+
+### 背景音乐导致误判
+
+当前检测器是轻量级能量节奏检测，不是真正的语音识别。遇到音乐、鼓点或强节奏背景音时可能误判。可以临时关闭当前网站，或降低最大倍速减少影响。
+
+## 文件说明
+
+| 文件 | 作用 |
+|---|---|
+| `manifest.json` | Chrome Manifest V3 扩展配置。 |
+| `content.js` | 内容脚本：站点状态、视频选择、音频分析、倍速控制、悬浮窗。 |
+| `popup.html` | 扩展弹窗结构。 |
+| `popup.js` | 扩展弹窗逻辑：读取状态、保存设置、与 content script 通信。 |
+| `popup.css` | 扩展弹窗样式。 |
+| `background.js` | MV3 service worker：处理 badge 和图标状态。 |
+| `icons/` | 扩展图标资源。 |
+
+## 主要参数
+
+大部分检测参数位于 `content.js`。
+
+| 参数 | 默认值 | 说明 |
 |---|---:|---|
-| `targetRate` | 9 | Desired effective syllable rate |
-| `minSpeed` | 1.0 | Minimum playback speed |
-| `maxSpeed` | 3.5 | Maximum playback speed |
-| `smoothing` | 0.25 | Speed-change smoothing factor |
-| `silenceHoldSec` | 3 | Silence duration before drifting toward 1x |
-| `detector.hpAlpha` | 0.9 | High-pass coefficient for energy modulation |
-| `detector.minCrossingInterval` | 70 ms | Minimum spacing between counted syllables |
-| `detector.minEnergy` | 0.003 | Silence gate energy floor |
-| `detector.windowSize` | 4000 ms | Sliding window for rate estimation |
+| `targetRate` | `9` | 目标有效语速，单位为音节/秒。 |
+| `minSpeed` | `1.0` | 最小播放倍速。 |
+| `maxSpeed` | `3.5` | 最大播放倍速。 |
+| `smoothing` | `0.25` | 倍速变化平滑系数。 |
+| `silenceHoldSec` | `3` | 静音多久后开始回落到 `1x`。 |
+| `detector.hpAlpha` | `0.9` | 能量调制高通系数。 |
+| `detector.minCrossingInterval` | `70ms` | 计数时允许的最短音节间隔。 |
+| `detector.minEnergy` | `0.003` | 静音判断的能量下限。 |
+| `detector.windowSize` | `4000ms` | 语速估算滑动窗口。 |
 
-If detection is noisy around music or background effects, raise `detector.minEnergy` or increase `detector.minCrossingInterval`. If quiet speech is missed, lower `detector.minEnergy` carefully.
+## 后续可优化方向
 
-## Known limitations
-
-- **DRM-protected content**: encrypted media may block `captureStream()`.
-- **Music and sound effects**: rhythmic non-speech audio can still look like syllables.
-- **Multiple simultaneous speakers**: the detector measures aggregate syllable-rate modulation.
-- **SPA navigation**: the extension re-attaches when videos change, but there can be a brief gap.
-- **Restricted pages**: Chrome internal pages and some browser-controlled pages cannot receive the content script.
-
-## Potential improvements
-
-- Add a speech/music classifier or VAD to ignore non-speech audio.
-- Use autocorrelation on the energy envelope for smoother rate estimation.
-- Add keyboard shortcuts with `chrome.commands`.
-- Add draggable/compact overlay modes.
+- 增加悬浮窗位置选择或紧凑模式，避免遮挡字幕。
+- 增加“重新检测视频”按钮，改善多视频页面体验。
+- 增加高级设置：平滑程度、静音保持时间、检测灵敏度。
+- 增加键盘快捷键，例如快速开启/关闭当前网站。
+- 增加更可靠的语音/音乐区分逻辑，减少背景音乐误判。
 
 ## License
 
