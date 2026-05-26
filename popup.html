@@ -6,9 +6,15 @@
 </head>
 <body>
   <div class="header">
-    <img src="icon.svg" alt="icon" style="width: 24px; height: 24px; border-radius: 4px; margin-right: 8px;">
+    <img src="icon.svg" alt="icon" class="app-icon">
     <h1>语速控制</h1>
-    <button id="toggle" class="toggle off">关闭</button>
+    <button id="toggle" class="toggle off">此网站关闭</button>
+  </div>
+
+  <div class="page-info">
+    <div id="site-line" class="site-line">当前网站：--</div>
+    <div id="status-message" class="status-message">正在读取状态...</div>
+    <div id="error-message" class="error-message" hidden></div>
   </div>
 
   <div id="status" class="status">
@@ -28,8 +34,12 @@
       <span class="ctrl-label">显示悬浮窗</span>
     </label>
     <label class="checkbox-label">
-      <input type="checkbox" id="auto-enable">
-      <span class="ctrl-label">在网站上自动启用</span>
+      <input type="checkbox" id="default-auto-enable">
+      <span class="ctrl-label">新网站默认自动启用</span>
+    </label>
+    <label class="checkbox-label">
+      <input type="checkbox" id="debug-logging">
+      <span class="ctrl-label">启用调试日志</span>
     </label>
   </div>
 
