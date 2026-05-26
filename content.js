@@ -17,7 +17,7 @@
     silenceHoldSec: { min: 0, max: 15 },
   };
 
-  const POLL_INTERVAL_MS = 50;
+  const POLL_INTERVAL_MS = 80;
   const OVERLAY_UPDATE_INTERVAL_MS = 250;
   const BADGE_UPDATE_INTERVAL_MS = 250;
   const DOM_SCAN_DEBOUNCE_MS = 900;
@@ -199,6 +199,11 @@
   });
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (_sender.id !== chrome.runtime.id) {
+      sendResponse({ ok: false, error: '消息来源不受信任' });
+      return false;
+    }
+
     if (msg.type === 'getStatus') {
       sendResponse(getStatus());
     } else if (msg.type === 'toggle') {
@@ -427,7 +432,7 @@
       const audioTracks = stream.getAudioTracks();
       diag.streamTracks = audioTracks.length;
       if (audioTracks.length === 0) {
-        diag.warning = '正在等待视频音轨，若视频已静音请先取消静音';
+        diag.warning = '未检测到视频音轨，请确认视频未静音并已开始播放；部分受保护视频可能无法分析';
         diag.stage = '等待音频轨道';
         scheduleSetupAudioRetry(video, generation);
         updateOverlay(true);
@@ -474,10 +479,10 @@
       updateOverlay(true);
       log('Pipeline ready');
     } catch (err) {
-      const message = err && err.message ? err.message : '音频捕获失败';
+      const detail = err && err.message ? err.message : '音频捕获失败';
       teardownAudio(false);
       diag.stage = '错误：音频捕获失败';
-      diag.error = message;
+      diag.error = detail + '。请确认视频未静音、页面已开始播放；DRM/受保护视频可能无法分析。';
       clearBadge('error');
       log('Setup failed', diag.error);
     }

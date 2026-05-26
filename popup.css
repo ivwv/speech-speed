@@ -44,11 +44,17 @@ h1 {
 
 .page-info,
 .status,
-.settings-group {
+.settings-group,
+.privacy-note {
   background: #16213e;
   border-radius: 8px;
   padding: 8px 10px;
   margin-bottom: 12px;
+}
+
+.privacy-note {
+  color: #bfdbfe;
+  font-size: 12px;
 }
 
 .site-line {

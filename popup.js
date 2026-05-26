@@ -149,7 +149,7 @@
   function sourceLabel(source) {
     const labels = {
       site: '此网站设置',
-      defaultAutoEnable: '默认自动启用',
+      defaultAutoEnable: '所有新网站默认自动启用',
       defaultOff: '默认关闭',
       legacyAutoEnable: '旧版自动启用',
       legacyEnabled: '旧版开启状态',
@@ -184,7 +184,7 @@
     }
     setControlsDisabled(false);
     statusMessage.textContent = '无法连接当前页面，请刷新页面后重试。';
-    showError('如果这是刚加载扩展前打开的页面，需要刷新后 content script 才会生效。');
+    showError('如果页面在安装或更新扩展前已打开，请刷新页面；Chrome 内部页面、扩展商店和部分受保护页面无法使用。');
   }
 
   function renderSettings(settings) {
