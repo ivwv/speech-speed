@@ -22,7 +22,7 @@
   const BADGE_UPDATE_INTERVAL_MS = 250;
   const DOM_SCAN_DEBOUNCE_MS = 900;
   const ATTACH_RETRY_COOLDOWN_MS = 1500;
-  const AUDIO_TRACK_RETRY_MS = 1000;
+  const AUDIO_TRACK_RETRY_MS = 250;
 
   let siteKey = getSiteKey(location.href);
   let enabled = false;
@@ -50,6 +50,10 @@
   let setupGeneration = 0;
   let lastAttachAttemptVideo = null;
   let lastAttachAttemptAt = 0;
+  let recaptureTimer = null;
+  let deadStreamTicks = 0;
+  let watchdogTimer = null;
+  let lastFullRecheckAt = 0;
 
   let overlayHost = null;
   let overlayEls = {};
@@ -298,6 +302,7 @@
     diag.warning = '';
     findAndAttach();
     observeDom();
+    startWatchdog();
   }
 
   function setupGlobalListeners() {
@@ -309,6 +314,21 @@
         setupAudio(e.target);
       }
     }, true);
+
+    // 监听用户滚动/键盘交互，加速检测新视频
+    const fastCheck = () => {
+      if (!enabled) return;
+      if (scanTimeout) clearTimeout(scanTimeout);
+      scanTimeout = setTimeout(() => {
+        scanTimeout = null;
+        if (!enabled) return;
+        findAndAttach();
+      }, 300);
+    };
+    window.addEventListener('wheel', fastCheck, { passive: true });
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') fastCheck();
+    }, { passive: true });
   }
 
   function isVisibleVideo(video) {
@@ -327,17 +347,27 @@
     let maxScore = -1;
     for (const video of videos) {
       const rect = video.getBoundingClientRect();
-      const area = rect.width * rect.height;
-      if (area <= 0) continue;
+      const visibleTop = Math.max(0, rect.top);
+      const visibleBottom = Math.min(window.innerHeight, rect.bottom);
+      const visibleLeft = Math.max(0, rect.left);
+      const visibleRight = Math.min(window.innerWidth, rect.right);
+      const visibleArea = Math.max(0, visibleBottom - visibleTop) * Math.max(0, visibleRight - visibleLeft);
 
-      const visible = isVisibleVideo(video);
-      if (!visible && video.paused) continue;
+      if (visibleArea <= 0 && video.paused) continue;
 
-      let score = area;
-      if (!video.paused) score *= 1000;
-      if (visible) score *= 3;
+      let score = visibleArea;
+      if (!video.paused) score += window.innerWidth * window.innerHeight * 10;
       if (!video.muted && video.volume > 0) score *= 2;
       if (document.pictureInPictureElement === video) score *= 4;
+
+      if (video.closest('[data-e2e="feed-active-video"]')) {
+        score += window.innerWidth * window.innerHeight * 100;
+      }
+      
+      // 彻底跳过直播间视频（直播流无法倍速，且极易导致 captureStream 音频管线卡死）
+      if (video.closest('.live-player-container, [data-e2e="live-room"], .xgplayer-is-live')) {
+        continue;
+      }
 
       if (score > maxScore) {
         maxScore = score;
@@ -345,6 +375,71 @@
       }
     }
     return best || videos[0] || null;
+  }
+
+  // 轮询中的看门狗：事件无关地纠正“挂错视频”的情况。
+  // 抖音等站点换视频可能不触发 play/Mutation 事件（元素复用或事件被吞），
+  // 每 2 秒主动检查：当前真正在视口内播放的是否还是我们挂着的那个。
+  function startWatchdog() {
+    if (watchdogTimer) return;
+    watchdogTimer = setInterval(() => {
+      if (!enabled) return;
+      const best = findBestVideo();
+      if (!best) {
+        // 如果当前页面找不到普通视频（例如滑到了直播间），且旧视频已不再可见/暂停，则主动断开
+        if (activeVideo && (!isVisibleVideo(activeVideo) || activeVideo.paused)) {
+          log('Watchdog: no valid normal video in view, tearing down');
+          teardownAudio();
+          activeVideo = null;
+        }
+        return;
+      }
+      if (best === activeVideo) {
+        // 挂对了元素但音频管线死了：强制重捕
+        if (best.paused === false && (!analyserNode || !pollTimer) && !pendingFindTimer && !recaptureTimer) {
+          log('Watchdog: pipeline dead while playing -> recapture');
+          recaptureAudio(best);
+        }
+        return;
+      }
+      
+      let currentOk = false;
+      if (activeVideo && !activeVideo.paused) {
+        const rect = activeVideo.getBoundingClientRect();
+        const visibleTop = Math.max(0, rect.top);
+        const visibleBottom = Math.min(window.innerHeight, rect.bottom);
+        if (visibleBottom - visibleTop > window.innerHeight * 0.1) {
+          currentOk = true; // 至少在视口中可见 10% 高度
+        }
+      }
+
+      const bestIsActiveFeed = best.closest('[data-e2e="feed-active-video"]');
+      const currentIsActiveFeed = activeVideo && activeVideo.closest('[data-e2e="feed-active-video"]');
+      if (bestIsActiveFeed && !currentIsActiveFeed) {
+        currentOk = false;
+      }
+
+      if (!currentOk) {
+        log('Watchdog: switching video');
+        attachToVideo(best, true);
+      }
+    }, 500); // 提速到 500ms，大幅提升切换响应速度
+  }
+
+  function stopWatchdog() {
+    if (watchdogTimer) {
+      clearInterval(watchdogTimer);
+      watchdogTimer = null;
+    }
+  }
+
+  // 全量重查：重新评估整个页面正在播放的视频；若还是当前元素则强制重捕音频
+  function fullRecheck(reason) {
+    const best = findBestVideo();
+    if (!best) return;
+    log('fullRecheck:', reason);
+    if (best === activeVideo) recaptureAudio(best);
+    else attachToVideo(best, true);
   }
 
   function mutationTouchesVideo(mutations) {
@@ -417,6 +512,15 @@
     video.addEventListener('canplay', onCanPlay, { signal, once: true });
 
     if (video.readyState >= 2) setupAudio(video);
+    else {
+      // 兜底：canplay 可能已错过（缓存视频秒开），1.5s 后若管线仍未建立则主动建立
+      setTimeout(() => {
+        if (activeVideo === video && enabled && !audioCtx && video.readyState >= 2) {
+          log('attach fallback: setupAudio after missed canplay');
+          setupAudio(video);
+        }
+      }, 1500);
+    }
   }
 
   async function setupAudio(video) {
@@ -432,7 +536,7 @@
       const audioTracks = stream.getAudioTracks();
       diag.streamTracks = audioTracks.length;
       if (audioTracks.length === 0) {
-        diag.warning = '未检测到视频音轨，请确认视频未静音并已开始播放；部分受保护视频可能无法分析';
+        diag.warning = '未检测到视频音轨，等待音频数据加载...';
         diag.stage = '等待音频轨道';
         scheduleSetupAudioRetry(video, generation);
         updateOverlay(true);
@@ -465,6 +569,13 @@
       highpassNode.connect(lowpassNode);
       lowpassNode.connect(analyserNode);
 
+      // 音轨被站点主动结束（换源）时，在同一元素上重新捕获
+      for (const track of audioTracks) {
+        track.addEventListener('ended', () => {
+          if (activeVideo === video && enabled) recaptureAudio(video);
+        });
+      }
+
       resetDetector();
       analyserBuffer = new Float32Array(analyserNode.fftSize);
       setupVideoListeners(video);
@@ -492,6 +603,21 @@
     return generation === setupGeneration && activeVideo === video && enabled;
   }
 
+  // 复用型播放器（如抖音 reuseVideo）：切换视频不换 <video> 元素，
+  // 旧的 captureStream 音轨会静默/结束。此函数在同一个元素上重新捕获音频。
+  function recaptureAudio(video) {
+    if (!enabled || !video || activeVideo !== video) return;
+    if (recaptureTimer) clearTimeout(recaptureTimer);
+    recaptureTimer = setTimeout(() => {
+      recaptureTimer = null;
+      if (!enabled || activeVideo !== video) return;
+      log('Recapturing audio stream on same <video>');
+      teardownAudio(false);
+      if (video.readyState >= 2) setupAudio(video);
+      else attachToVideo(video, true);
+    }, 300);
+  }
+
   function scheduleSetupAudioRetry(video, generation) {
     if (pendingFindTimer) clearTimeout(pendingFindTimer);
     pendingFindTimer = setTimeout(() => {
@@ -516,6 +642,23 @@
       activeVideo = null;
       scheduleFindAndAttach();
     }, { signal });
+
+    // 站点自身把 playbackRate 重置回 1（如抖音切换视频时），立即恢复我们的速度
+    video.addEventListener('ratechange', () => {
+      if (activeVideo !== video || !enabled) return;
+      if (lastAppliedPlaybackRate !== null && video.playbackRate !== lastAppliedPlaybackRate && !video.paused) {
+        log('External playbackRate change ->', video.playbackRate);
+        applySpeed();
+      }
+    }, { signal });
+
+    // 复用元素换内容（改 src / MSE 换源）时重新捕获音频流
+    video.addEventListener('loadeddata', () => {
+      if (activeVideo === video && enabled) recaptureAudio(video);
+    }, { signal });
+    video.addEventListener('durationchange', () => {
+      if (activeVideo === video && enabled) recaptureAudio(video);
+    }, { signal });
   }
 
   function scheduleFindAndAttach() {
@@ -527,6 +670,8 @@
   }
 
   function resetDetector() {
+    deadStreamTicks = 0;
+    lastFullRecheckAt = 0;
     detector.envelope = 0;
     detector.hpPrevInput = 0;
     detector.hpPrevOutput = 0;
@@ -542,7 +687,10 @@
     diag.lastNaturalRate = 0;
     diag.lastTargetSpeed = 0;
     diag.silenceSec = 0;
+    activeVideoTime = -1;
   }
+
+  let activeVideoTime = -1;
 
   function startPolling() {
     if (pollTimer || !enabled || !activeVideo || !analyserNode || !analyserBuffer) return;
@@ -565,6 +713,30 @@
     let sum = 0;
     for (let i = 0; i < buffer.length; i++) sum += buffer[i] * buffer[i];
     const rms = Math.sqrt(sum / buffer.length);
+
+    const currentTime = activeVideo.currentTime;
+    
+    // 快速检测：复用元素换源时 currentTime 通常会重置到 0 附近，如果发生大幅倒退，直接重捕获
+    if (activeVideoTime !== -1 && currentTime < 1.0 && activeVideoTime > currentTime + 2.0) {
+      log('Video time jumped to start -> likely source changed -> recapture');
+      recaptureAudio(activeVideo);
+      activeVideoTime = currentTime;
+      return;
+    }
+    activeVideoTime = currentTime;
+
+    // 自愈：视频在播放但采样全为 0（复用元素换源后旧音轨失效），主动重捕
+    if (!activeVideo.paused && rms === 0) {
+      deadStreamTicks++;
+      if (deadStreamTicks * POLL_INTERVAL_MS > 2000) { // 从 4 秒缩短到 2 秒，加快死流恢复
+        deadStreamTicks = 0;
+        log('Dead audio stream detected');
+        recaptureAudio(activeVideo);
+        return;
+      }
+    } else {
+      deadStreamTicks = 0;
+    }
 
     detector.envelope += detector.envelopeAlpha * (rms - detector.envelope);
     const filtered = detector.hpAlpha * (detector.hpPrevOutput + rms - detector.hpPrevInput);
@@ -593,6 +765,11 @@
       diag.silenceSec = silenceDuration;
       diag.lastNaturalRate = 0;
       diag.lastTargetSpeed = currentSpeed;
+      // 视频在播却持续 8 秒听不到语音：多半挂错元素或音频流已死，全量重查（限频 10 秒一次）
+      if (!activeVideo.paused && silenceDuration > 8 && nowSec - lastFullRecheckAt > 10) {
+        lastFullRecheckAt = nowSec;
+        fullRecheck('prolonged silence while playing');
+      }
       if (silenceDuration > settings.silenceHoldSec) {
         currentSpeed += 0.03 * (1 - currentSpeed);
         applySpeed();
@@ -640,6 +817,10 @@
   function teardownAudio(restoreRate = true) {
     setupGeneration++;
     stopPolling();
+    if (recaptureTimer) {
+      clearTimeout(recaptureTimer);
+      recaptureTimer = null;
+    }
     if (pendingFindTimer) {
       clearTimeout(pendingFindTimer);
       pendingFindTimer = null;
@@ -672,6 +853,7 @@
   function teardown() {
     teardownAudio();
     activeVideo = null;
+    stopWatchdog();
     if (scanTimeout) {
       clearTimeout(scanTimeout);
       scanTimeout = null;
